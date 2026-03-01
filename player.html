@@ -491,6 +491,7 @@
       };
 
       const MEMORIZATION_SETS_KEY = "quranPlayer:memorizationSets:v1";
+      const READQURAN_MAX_VERSES_PER_REQUEST = 10;
 
       function pad3(value) {
         return String(value).padStart(3, "0");
@@ -586,6 +587,23 @@
           segments.push({ chapter, startVerse, endVerse });
         }
         return segments;
+      }
+
+      function splitSegmentIntoApiChunks(segment) {
+        const chunks = [];
+        let cursor = segment.startVerse;
+
+        while (cursor <= segment.endVerse) {
+          const chunkEnd = Math.min(cursor + READQURAN_MAX_VERSES_PER_REQUEST - 1, segment.endVerse);
+          chunks.push({
+            chapter: segment.chapter,
+            startVerse: cursor,
+            endVerse: chunkEnd,
+          });
+          cursor = chunkEnd + 1;
+        }
+
+        return chunks;
       }
 
       function setVerseText(arabic = "—", urdu = "—", english = "—") {
@@ -792,7 +810,6 @@
       }
 
       async function fetchChapterTextRange(segment) {
-        const url = `https://api.readquran.app/chapter/${segment.chapter}:${segment.startVerse}-${segment.endVerse}`;
         const payload = {
           en: true,
           zk: false,
@@ -815,32 +832,42 @@
           hover: 0,
         };
 
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
+        const chunks = splitSegmentIntoApiChunks(segment);
+        const combined = [];
 
-        if (!response.ok) {
-          throw new Error(`Text API request failed with ${response.status}`);
+        for (const chunk of chunks) {
+          const url = `https://api.readquran.app/chapter/${chunk.chapter}:${chunk.startVerse}-${chunk.endVerse}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Text API request failed with ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (!Array.isArray(data)) {
+            continue;
+          }
+
+          combined.push(
+            ...data
+              .map((item) => ({
+                chapter: toInt(item.ch),
+                verse: toInt(item.v),
+                ar: cleanText(item.ar),
+                ur: cleanText(item.ur?.text),
+                en: cleanText(item.en?.text),
+              }))
+              .filter((item) => item.chapter > 0 && item.verse > 0),
+          );
         }
 
-        const data = await response.json();
-        if (!Array.isArray(data)) {
-          return [];
-        }
-
-        return data
-          .map((item) => ({
-            chapter: toInt(item.ch),
-            verse: toInt(item.v),
-            ar: cleanText(item.ar),
-            ur: cleanText(item.ur?.text),
-            en: cleanText(item.en?.text),
-          }))
-          .filter((item) => item.chapter > 0 && item.verse > 0);
+        return combined;
       }
 
       async function fetchRangeTexts(start, end) {
