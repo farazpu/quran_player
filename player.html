@@ -415,7 +415,7 @@
             </div>
             <div>
               <label for="startVerse">Verse</label>
-              <input id="startVerse" type="number" min="1" value="3" />
+              <select id="startVerse"></select>
             </div>
           </div>
         </div>
@@ -429,7 +429,7 @@
             </div>
             <div>
               <label for="endVerse">Verse</label>
-              <input id="endVerse" type="number" min="1" value="3" />
+              <select id="endVerse"></select>
             </div>
           </div>
         </div>
@@ -1111,15 +1111,24 @@
         const startMax = chapterMaxVerse(startChapter) || 1;
         const endMax = chapterMaxVerse(endChapter) || 1;
 
-        startVerseInput.max = String(startMax);
-        endVerseInput.max = String(endMax);
+        const currentStartVerse = toInt(startVerseInput.value) || 3;
+        const currentEndVerse = toInt(endVerseInput.value) || 3;
 
-        if (toInt(startVerseInput.value) > startMax) {
-          startVerseInput.value = String(startMax);
-        }
-        if (toInt(endVerseInput.value) > endMax) {
-          endVerseInput.value = String(endMax);
-        }
+        const startOptions = Array.from({ length: startMax }, (_, index) => {
+          const verse = index + 1;
+          return `<option value="${verse}">${verse}</option>`;
+        }).join("");
+
+        const endOptions = Array.from({ length: endMax }, (_, index) => {
+          const verse = index + 1;
+          return `<option value="${verse}">${verse}</option>`;
+        }).join("");
+
+        startVerseInput.innerHTML = startOptions;
+        endVerseInput.innerHTML = endOptions;
+
+        startVerseInput.value = String(Math.min(Math.max(currentStartVerse, 1), startMax));
+        endVerseInput.value = String(Math.min(Math.max(currentEndVerse, 1), endMax));
       }
 
       function validateInputs(showStatus = true) {
@@ -1137,8 +1146,9 @@
         }
 
         if (compareRef(start, end) > 0) {
-          if (showStatus) setStatus("End reference must be after or equal to start reference.", true);
-          return false;
+          endChapterInput.value = String(start.chapter);
+          syncVerseBounds();
+          endVerseInput.value = String(start.verse);
         }
 
         if (getSelectedRepeatMode() === "count" && toInt(repeatCountInput.value) < 1) {
