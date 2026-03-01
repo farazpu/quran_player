@@ -104,7 +104,7 @@
       .actions {
         margin-top: 14px;
         display: grid;
-        grid-template-columns: repeat(5, minmax(120px, 1fr));
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
         gap: 10px;
       }
 
@@ -174,6 +174,62 @@
         margin-top: 10px;
         font-size: 0.8rem;
         color: #afc4ff;
+      }
+
+      .sets-panel {
+        margin-top: 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(159, 182, 255, 0.2);
+        padding: 14px;
+        background: rgba(4, 10, 20, 0.55);
+      }
+
+      .sets-controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: end;
+      }
+
+      .sets-title {
+        margin: 0;
+        font-size: 1rem;
+        color: #dce8ff;
+      }
+
+      .sets-list {
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+
+      .sets-item {
+        border: 1px solid rgba(159, 182, 255, 0.2);
+        background: rgba(9, 15, 29, 0.7);
+        border-radius: 10px;
+        padding: 9px 10px;
+        text-align: left;
+      }
+
+      .sets-item-label {
+        display: block;
+        color: #ebf2ff;
+        font-weight: 600;
+      }
+
+      .sets-item-meta {
+        margin-top: 2px;
+        display: block;
+        color: #b7c9f7;
+        font-size: 0.82rem;
+      }
+
+      .sets-empty {
+        margin-top: 10px;
+        color: #afc4ff;
+        font-size: 0.9rem;
       }
 
       .verse-panel {
@@ -265,6 +321,10 @@
         .actions {
           grid-template-columns: 1fr;
         }
+
+        .sets-controls {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
@@ -334,6 +394,21 @@
         <button id="restartButton">Restart From Beginning</button>
         <button id="pauseButton">Pause</button>
         <button class="danger" id="stopButton">Stop</button>
+        <button id="saveSetButton">Save...</button>
+      </section>
+
+      <section class="sets-panel">
+        <h2 class="sets-title">Memorization Sets</h2>
+        <div class="sets-controls">
+          <div>
+            <label for="setLabelInput">Set Label</label>
+            <input id="setLabelInput" type="text" maxlength="80" placeholder="e.g. Surah 55, 21-30 x5" />
+          </div>
+          <button id="saveSetInlineButton">Save Current Set</button>
+        </div>
+        <p class="help">Click any saved set to load it into the player. Then press Play.</p>
+        <ul id="setsList" class="sets-list"></ul>
+        <div id="setsEmpty" class="sets-empty">No memorization sets saved yet.</div>
       </section>
 
       <section class="status-wrap">
@@ -386,6 +461,11 @@
       const restartButton = document.getElementById("restartButton");
       const pauseButton = document.getElementById("pauseButton");
       const stopButton = document.getElementById("stopButton");
+      const saveSetButton = document.getElementById("saveSetButton");
+      const saveSetInlineButton = document.getElementById("saveSetInlineButton");
+      const setLabelInput = document.getElementById("setLabelInput");
+      const setsListEl = document.getElementById("setsList");
+      const setsEmptyEl = document.getElementById("setsEmpty");
       const statusEl = document.getElementById("status");
       const metaEl = document.getElementById("meta");
       const sourcePatternEl = document.getElementById("sourcePattern");
@@ -407,7 +487,10 @@
         textLoading: false,
         textError: "",
         textRequestId: 0,
+        memorizationSets: [],
       };
+
+      const MEMORIZATION_SETS_KEY = "quranPlayer:memorizationSets:v1";
 
       function pad3(value) {
         return String(value).padStart(3, "0");
@@ -514,6 +597,165 @@
       function setTextStatus(message = "", isError = false) {
         apiTextStatusEl.textContent = message;
         apiTextStatusEl.classList.toggle("error", isError);
+      }
+
+      function normalizeMemorizationSet(record) {
+        if (!record || typeof record !== "object") {
+          return null;
+        }
+
+        const repeatMode = record.repeatMode === "forever" || record.repeatMode === "count" ? record.repeatMode : "off";
+        const normalized = {
+          id: typeof record.id === "string" ? record.id : `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+          label: typeof record.label === "string" ? record.label.trim() : "",
+          startChapter: toInt(record.startChapter),
+          startVerse: toInt(record.startVerse),
+          endChapter: toInt(record.endChapter),
+          endVerse: toInt(record.endVerse),
+          repeatMode,
+          repeatCount: Math.max(1, toInt(record.repeatCount || 1)),
+          createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+          updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+        };
+
+        const start = { chapter: normalized.startChapter, verse: normalized.startVerse };
+        const end = { chapter: normalized.endChapter, verse: normalized.endVerse };
+
+        if (!normalized.label) {
+          return null;
+        }
+        if (!isValidRef(start) || !isValidRef(end)) {
+          return null;
+        }
+        if (compareRef(start, end) > 0) {
+          return null;
+        }
+
+        return normalized;
+      }
+
+      function readMemorizationSets() {
+        try {
+          const raw = localStorage.getItem(MEMORIZATION_SETS_KEY);
+          if (!raw) {
+            return [];
+          }
+
+          const parsed = JSON.parse(raw);
+          const sourceArray = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.sets) ? parsed.sets : [];
+
+          return sourceArray.map(normalizeMemorizationSet).filter(Boolean);
+        } catch (error) {
+          setStatus("Saved sets could not be read from local storage.", true);
+          return [];
+        }
+      }
+
+      function persistMemorizationSets() {
+        const payload = {
+          schemaVersion: 1,
+          updatedAt: new Date().toISOString(),
+          sets: state.memorizationSets,
+        };
+
+        try {
+          localStorage.setItem(MEMORIZATION_SETS_KEY, JSON.stringify(payload));
+          return true;
+        } catch (error) {
+          setStatus("Could not save memorization set (storage unavailable or full).", true);
+          return false;
+        }
+      }
+
+      function renderMemorizationSets() {
+        setsListEl.innerHTML = "";
+
+        if (!state.memorizationSets.length) {
+          setsEmptyEl.style.display = "block";
+          return;
+        }
+
+        setsEmptyEl.style.display = "none";
+
+        for (const item of state.memorizationSets) {
+          const li = document.createElement("li");
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "sets-item";
+          button.dataset.setId = item.id;
+
+          const repeatText = item.repeatMode === "count" ? `N=${item.repeatCount}` : item.repeatMode === "forever" ? "Forever" : "Off";
+          button.innerHTML = `<span class="sets-item-label">${item.label}</span><span class="sets-item-meta">${pad3(item.startChapter)}:${pad3(item.startVerse)} → ${pad3(item.endChapter)}:${pad3(item.endVerse)} | Repeat: ${repeatText}</span>`;
+
+          li.appendChild(button);
+          setsListEl.appendChild(li);
+        }
+      }
+
+      function buildSetFromCurrentUi(label) {
+        const { start, end } = getFormRefs();
+        return {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+          label,
+          startChapter: start.chapter,
+          startVerse: start.verse,
+          endChapter: end.chapter,
+          endVerse: end.verse,
+          repeatMode: repeatModeSelect.value,
+          repeatCount: repeatModeSelect.value === "count" ? Math.max(1, toInt(repeatCountInput.value)) : 1,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      function saveMemorizationSet() {
+        if (!validateInputs(true)) {
+          return;
+        }
+
+        const label = setLabelInput.value.trim();
+        if (!label) {
+          setStatus("Please enter a label before saving the memorization set.", true);
+          return;
+        }
+
+        const existingIndex = state.memorizationSets.findIndex((item) => item.label.toLowerCase() === label.toLowerCase());
+        const candidate = buildSetFromCurrentUi(label);
+
+        if (existingIndex >= 0) {
+          candidate.id = state.memorizationSets[existingIndex].id;
+          candidate.createdAt = state.memorizationSets[existingIndex].createdAt;
+          state.memorizationSets[existingIndex] = candidate;
+        } else {
+          state.memorizationSets.unshift(candidate);
+        }
+
+        if (!persistMemorizationSets()) {
+          return;
+        }
+
+        renderMemorizationSets();
+        setStatus(existingIndex >= 0 ? `Updated memorization set: ${label}` : `Saved memorization set: ${label}`);
+      }
+
+      function loadMemorizationSet(setId) {
+        const item = state.memorizationSets.find((set) => set.id === setId);
+        if (!item) {
+          setStatus("Selected memorization set was not found.", true);
+          return;
+        }
+
+        startChapterInput.value = String(item.startChapter);
+        startVerseInput.value = String(item.startVerse);
+        endChapterInput.value = String(item.endChapter);
+        endVerseInput.value = String(item.endVerse);
+        repeatModeSelect.value = item.repeatMode;
+        repeatCountInput.value = String(item.repeatCount);
+        setLabelInput.value = item.label;
+
+        onRepeatModeChange();
+        validateInputs(false);
+        setStatus(`Loaded memorization set: ${item.label}`);
       }
 
       function renderCurrentVerseText(ref = null) {
@@ -878,6 +1120,14 @@
         stopPlayback(`Audio failed to load for ${refText}.`, true);
       }
 
+      function onSetListClick(event) {
+        const target = event.target.closest("button[data-set-id]");
+        if (!target) {
+          return;
+        }
+        loadMemorizationSet(target.dataset.setId);
+      }
+
       function initialize() {
         sourcePatternEl.textContent = "https://files.alislam.cloud/audio/tilawat/rashid/CHAPTER-VERSE-AR.mp3";
         playButton.addEventListener("click", onPlay);
@@ -885,6 +1135,9 @@
         restartButton.addEventListener("click", restartFromBeginning);
         pauseButton.addEventListener("click", onPause);
         stopButton.addEventListener("click", () => stopPlayback("Stopped."));
+        saveSetButton.addEventListener("click", saveMemorizationSet);
+        saveSetInlineButton.addEventListener("click", saveMemorizationSet);
+        setsListEl.addEventListener("click", onSetListClick);
         repeatModeSelect.addEventListener("change", onRepeatModeChange);
         audioPlayer.addEventListener("ended", handleEnded);
         audioPlayer.addEventListener("error", onAudioError);
@@ -900,6 +1153,8 @@
 
         onRepeatModeChange();
         validateInputs(false);
+        state.memorizationSets = readMemorizationSets();
+        renderMemorizationSets();
         updateMeta();
         renderCurrentVerseText(null);
       }
