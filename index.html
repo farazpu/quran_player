@@ -160,12 +160,16 @@
         verseTexts: new Map(),
         textLoading: false,
         textError: "",
+        textFetchInFlight: false,
+        textPrefetchTimerId: null,
         textRequestId: 0,
         memorizationSets: [],
       };
 
       const MEMORIZATION_SETS_KEY = "quranPlayer:memorizationSets:v1";
       const READQURAN_MAX_VERSES_PER_REQUEST = 10;
+      const READQURAN_PREFETCH_WINDOW_VERSES = 20;
+      const READQURAN_PREFETCH_DEBOUNCE_MS = 100;
 
       function pad3(value) {
         return String(value).padStart(3, "0");
@@ -330,13 +334,33 @@
           .trim();
       }
 
-      function getChapterSegments(start, end) {
+      function getUpcomingMissingTextSegments(range, startIndex, windowSize) {
         const segments = [];
-        for (let chapter = start.chapter; chapter <= end.chapter; chapter += 1) {
-          const startVerse = chapter === start.chapter ? start.verse : 1;
-          const endVerse = chapter === end.chapter ? end.verse : chapterMaxVerse(chapter);
-          segments.push({ chapter, startVerse, endVerse });
+        let activeSegment = null;
+        let inspected = 0;
+
+        for (let index = startIndex; index < range.length && inspected < windowSize; index += 1) {
+          const ref = range[index];
+          inspected += 1;
+
+          if (state.verseTexts.has(verseKey(ref))) {
+            activeSegment = null;
+            continue;
+          }
+
+          if (!activeSegment || activeSegment.chapter !== ref.chapter || ref.verse !== activeSegment.endVerse + 1) {
+            activeSegment = {
+              chapter: ref.chapter,
+              startVerse: ref.verse,
+              endVerse: ref.verse,
+            };
+            segments.push(activeSegment);
+            continue;
+          }
+
+          activeSegment.endVerse = ref.verse;
         }
+
         return segments;
       }
 
@@ -675,27 +699,37 @@
         return combined;
       }
 
-      async function fetchRangeTexts(start, end) {
-        const requestId = state.textRequestId + 1;
-        state.textRequestId = requestId;
+      async function prefetchUpcomingVerseTexts() {
+        if (!state.range.length || state.textFetchInFlight) {
+          return;
+        }
+
+        const requestId = state.textRequestId;
+        const segments = getUpcomingMissingTextSegments(state.range, state.currentIndex, READQURAN_PREFETCH_WINDOW_VERSES);
+
+        if (!segments.length) {
+          if (state.textLoading) {
+            state.textLoading = false;
+            renderCurrentVerseText(state.range[state.currentIndex] || null);
+          }
+          return;
+        }
+
+        state.textFetchInFlight = true;
         state.textLoading = true;
         state.textError = "";
-        state.verseTexts = new Map();
-
-        renderCurrentVerseText(state.range[state.currentIndex] || start);
+        renderCurrentVerseText(state.range[state.currentIndex] || null);
 
         try {
-          const segments = getChapterSegments(start, end);
-          const results = await Promise.all(segments.map((segment) => fetchChapterTextRange(segment)));
+          for (const segment of segments) {
+            const chapterVerses = await fetchChapterTextRange(segment);
 
-          if (requestId !== state.textRequestId) {
-            return;
-          }
+            if (requestId !== state.textRequestId) {
+              return;
+            }
 
-          const merged = new Map();
-          for (const chapterVerses of results) {
             for (const verse of chapterVerses) {
-              merged.set(verseKey(verse), {
+              state.verseTexts.set(verseKey(verse), {
                 ar: verse.ar,
                 ur: verse.ur,
                 en: verse.en,
@@ -703,18 +737,37 @@
             }
           }
 
-          state.verseTexts = merged;
-          state.textLoading = false;
           state.textError = "";
-          renderCurrentVerseText(state.range[state.currentIndex] || start);
         } catch (error) {
           if (requestId !== state.textRequestId) {
             return;
           }
-          state.textLoading = false;
           state.textError = "Could not load verse text. Audio playback still works.";
-          renderCurrentVerseText(state.range[state.currentIndex] || start);
+        } finally {
+          if (requestId !== state.textRequestId) {
+            return;
+          }
+
+          state.textFetchInFlight = false;
+          state.textLoading = false;
+          renderCurrentVerseText(state.range[state.currentIndex] || null);
         }
+      }
+
+      function schedulePrefetchUpcomingVerseTexts(delayMs = READQURAN_PREFETCH_DEBOUNCE_MS) {
+        if (state.textPrefetchTimerId !== null) {
+          window.clearTimeout(state.textPrefetchTimerId);
+          state.textPrefetchTimerId = null;
+        }
+
+        const requestId = state.textRequestId;
+        state.textPrefetchTimerId = window.setTimeout(() => {
+          state.textPrefetchTimerId = null;
+          if (requestId !== state.textRequestId) {
+            return;
+          }
+          prefetchUpcomingVerseTexts();
+        }, delayMs);
       }
 
       function setStatus(message, isError = false) {
@@ -834,6 +887,7 @@
         }
 
         const ref = state.range[state.currentIndex];
+        schedulePrefetchUpcomingVerseTexts();
         const url = buildUrl(ref);
         audioPlayer.src = url;
         updateMeta(ref);
@@ -858,6 +912,11 @@
         state.range = [];
         state.currentIndex = 0;
         state.completedCycles = 0;
+        if (state.textPrefetchTimerId !== null) {
+          window.clearTimeout(state.textPrefetchTimerId);
+          state.textPrefetchTimerId = null;
+        }
+        state.textFetchInFlight = false;
         state.textLoading = false;
         state.textError = "";
         state.verseTexts = new Map();
@@ -879,13 +938,22 @@
         state.range = buildRange(start, end);
         state.active = state.range.length > 0;
         state.paused = false;
+        if (state.textPrefetchTimerId !== null) {
+          window.clearTimeout(state.textPrefetchTimerId);
+          state.textPrefetchTimerId = null;
+        }
+        state.textRequestId += 1;
+        state.textFetchInFlight = false;
+        state.textLoading = false;
+        state.textError = "";
+        state.verseTexts = new Map();
 
         if (!state.range.length) {
           setStatus("No verses found in selected range.", true);
           return;
         }
 
-        fetchRangeTexts(start, end);
+        schedulePrefetchUpcomingVerseTexts();
         playCurrentRef();
       }
 
@@ -918,6 +986,7 @@
             .then(() => {
               state.paused = false;
               state.active = true;
+              schedulePrefetchUpcomingVerseTexts();
               setStatus("Resumed.");
               updateMeta();
             })
