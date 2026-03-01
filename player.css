@@ -279,12 +279,32 @@ button:disabled {
   gap: 8px;
 }
 
+.sets-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .sets-item {
   border: 1px solid rgba(159, 182, 255, 0.2);
   background: rgba(9, 15, 29, 0.7);
   border-radius: 10px;
   padding: 9px 10px;
   text-align: left;
+}
+
+.sets-delete {
+  width: auto;
+  border: 1px solid rgba(203, 95, 114, 0.55);
+  background: rgba(127, 37, 48, 0.9);
+  border-radius: 10px;
+  padding: 9px 12px;
+  align-self: stretch;
+}
+
+.sets-delete:hover:enabled {
+  background: rgba(150, 45, 60, 0.95);
 }
 
 .sets-item-label {
@@ -397,6 +417,10 @@ button:disabled {
   }
 
   .sets-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .sets-item-row {
     grid-template-columns: 1fr;
   }
 

@@ -194,8 +194,8 @@
       }
 
       function renderChapterDropdownOptions(chapters) {
-        const previousStart = toInt(startChapterInput.value) || 55;
-        const previousEnd = toInt(endChapterInput.value) || 55;
+        const previousStart = toInt(startChapterInput.value) || 1;
+        const previousEnd = toInt(endChapterInput.value) || 1;
 
         const optionsMarkup = chapters.map((chapter) => `<option value="${chapter.id}">${chapterLabel(chapter)}</option>`).join("");
 
@@ -448,6 +448,8 @@
 
         for (const item of state.memorizationSets) {
           const li = document.createElement("li");
+          li.className = "sets-item-row";
+
           const button = document.createElement("button");
           button.type = "button";
           button.className = "sets-item";
@@ -456,9 +458,40 @@
           const repeatText = item.repeatMode === "count" ? `N=${item.repeatCount}` : item.repeatMode === "forever" ? "Forever" : "Off";
           button.innerHTML = `<span class="sets-item-label">${item.label}</span><span class="sets-item-meta">${item.startChapter}:${item.startVerse} → ${item.endChapter}:${item.endVerse} | Repeat: ${repeatText}</span>`;
 
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "sets-delete";
+          deleteButton.dataset.deleteSetId = item.id;
+          deleteButton.setAttribute("aria-label", `Delete memorization set: ${item.label}`);
+          deleteButton.textContent = "Delete";
+
           li.appendChild(button);
+          li.appendChild(deleteButton);
           setsListEl.appendChild(li);
         }
+      }
+
+      function deleteMemorizationSet(setId) {
+        const target = state.memorizationSets.find((set) => set.id === setId);
+        if (!target) {
+          setStatus("Selected memorization set was not found.", true);
+          return;
+        }
+
+        const confirmed = window.confirm(`Delete memorization set "${target.label}"?`);
+        if (!confirmed) {
+          setStatus("Delete canceled.");
+          return;
+        }
+
+        state.memorizationSets = state.memorizationSets.filter((set) => set.id !== setId);
+
+        if (!persistMemorizationSets()) {
+          return;
+        }
+
+        renderMemorizationSets();
+        setStatus(`Deleted memorization set: ${target.label}`);
       }
 
       function buildSetFromCurrentUi(label) {
@@ -719,8 +752,8 @@
         const startMax = chapterMaxVerse(startChapter) || 1;
         const endMax = chapterMaxVerse(endChapter) || 1;
 
-        const currentStartVerse = toInt(startVerseInput.value) || 3;
-        const currentEndVerse = toInt(endVerseInput.value) || 3;
+        const currentStartVerse = toInt(startVerseInput.value) || 1;
+        const currentEndVerse = toInt(endVerseInput.value) || 7;
 
         const startOptions = Array.from({ length: startMax }, (_, index) => {
           const verse = index + 1;
@@ -937,6 +970,12 @@
       }
 
       function onSetListClick(event) {
+        const deleteTarget = event.target.closest("button[data-delete-set-id]");
+        if (deleteTarget) {
+          deleteMemorizationSet(deleteTarget.dataset.deleteSetId);
+          return;
+        }
+
         const target = event.target.closest("button[data-set-id]");
         if (!target) {
           return;
