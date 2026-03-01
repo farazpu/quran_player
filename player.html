@@ -339,7 +339,7 @@
           <div class="row">
             <div>
               <label for="startChapter">Chapter (1-114)</label>
-              <input id="startChapter" type="number" min="1" max="114" value="55" />
+              <select id="startChapter"></select>
             </div>
             <div>
               <label for="startVerse">Verse</label>
@@ -353,7 +353,7 @@
           <div class="row">
             <div>
               <label for="endChapter">Chapter (1-114)</label>
-              <input id="endChapter" type="number" min="1" max="114" value="55" />
+              <select id="endChapter"></select>
             </div>
             <div>
               <label for="endVerse">Verse</label>
@@ -380,12 +380,6 @@
           </div>
           <p class="help">N is full-range cycles. Example: N=3 means your selected range plays 3 full times.</p>
         </div>
-
-        <div class="panel">
-          <h2>Source Pattern</h2>
-          <div class="meta" id="sourcePattern"></div>
-          <p class="help">Chapter and verse are always 3 digits with zero-padding.</p>
-        </div>
       </section>
 
       <section class="actions">
@@ -395,20 +389,6 @@
         <button id="pauseButton">Pause</button>
         <button class="danger" id="stopButton">Stop</button>
         <button id="saveSetButton">Save...</button>
-      </section>
-
-      <section class="sets-panel">
-        <h2 class="sets-title">Memorization Sets</h2>
-        <div class="sets-controls">
-          <div>
-            <label for="setLabelInput">Set Label</label>
-            <input id="setLabelInput" type="text" maxlength="80" placeholder="e.g. Surah 55, 21-30 x5" />
-          </div>
-          <button id="saveSetInlineButton">Save Current Set</button>
-        </div>
-        <p class="help">Click any saved set to load it into the player. Then press Play.</p>
-        <ul id="setsList" class="sets-list"></ul>
-        <div id="setsEmpty" class="sets-empty">No memorization sets saved yet.</div>
       </section>
 
       <section class="status-wrap">
@@ -437,6 +417,20 @@
             <p id="englishText" class="verse-text verse-text-en">—</p>
           </article>
         </div>
+      </section>
+
+      <section class="sets-panel">
+        <h2 class="sets-title">Memorization Sets</h2>
+        <div class="sets-controls">
+          <div>
+            <label for="setLabelInput">Set Label</label>
+            <input id="setLabelInput" type="text" maxlength="80" placeholder="e.g. Surah 55, 21-30 x5" />
+          </div>
+          <button id="saveSetInlineButton">Save Current Set</button>
+        </div>
+        <p class="help">Click any saved set to load it into the player. Then press Play.</p>
+        <ul id="setsList" class="sets-list"></ul>
+        <div id="setsEmpty" class="sets-empty">No memorization sets saved yet.</div>
       </section>
 
       <audio id="audioPlayer" preload="auto"></audio>
@@ -468,7 +462,6 @@
       const setsEmptyEl = document.getElementById("setsEmpty");
       const statusEl = document.getElementById("status");
       const metaEl = document.getElementById("meta");
-      const sourcePatternEl = document.getElementById("sourcePattern");
       const currentVerseRefEl = document.getElementById("currentVerseRef");
       const apiTextStatusEl = document.getElementById("apiTextStatus");
       const arabicTextEl = document.getElementById("arabicText");
@@ -505,6 +498,64 @@
       function chapterMaxVerse(chapter) {
         if (chapter < 1 || chapter > 114) return 0;
         return chapterVerseCounts[chapter - 1];
+      }
+
+      function getFallbackChapters() {
+        return chapterVerseCounts.map((totalVerses, index) => ({
+          id: index + 1,
+          transliteration: `Chapter ${index + 1}`,
+          total_verses: totalVerses,
+        }));
+      }
+
+      function chapterLabel(chapter) {
+        return `${chapter.id} - ${chapter.transliteration || chapter.translation || chapter.name || `Chapter ${chapter.id}`}`;
+      }
+
+      function renderChapterDropdownOptions(chapters) {
+        const previousStart = toInt(startChapterInput.value) || 55;
+        const previousEnd = toInt(endChapterInput.value) || 55;
+
+        const optionsMarkup = chapters.map((chapter) => `<option value="${chapter.id}">${chapterLabel(chapter)}</option>`).join("");
+
+        startChapterInput.innerHTML = optionsMarkup;
+        endChapterInput.innerHTML = optionsMarkup;
+
+        startChapterInput.value = String(previousStart);
+        endChapterInput.value = String(previousEnd);
+      }
+
+      async function loadChapterDropdowns() {
+        renderChapterDropdownOptions(getFallbackChapters());
+
+        try {
+          const response = await fetch("./chapters_en.json", { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(`Failed with status ${response.status}`);
+          }
+
+          const chapters = await response.json();
+          if (!Array.isArray(chapters) || !chapters.length) {
+            throw new Error("Invalid chapters payload");
+          }
+
+          const normalized = chapters
+            .map((chapter) => ({
+              id: toInt(chapter.id),
+              transliteration: typeof chapter.transliteration === "string" ? chapter.transliteration.trim() : "",
+              translation: typeof chapter.translation === "string" ? chapter.translation.trim() : "",
+              name: typeof chapter.name === "string" ? chapter.name.trim() : "",
+            }))
+            .filter((chapter) => chapter.id >= 1 && chapter.id <= 114)
+            .sort((a, b) => a.id - b.id);
+
+          if (normalized.length === 114) {
+            renderChapterDropdownOptions(normalized);
+            validateInputs(false);
+          }
+        } catch (error) {
+          setStatus("Using default chapter labels because chapters_en.json could not be loaded.", true);
+        }
       }
 
       function buildUrl(ref) {
@@ -1156,7 +1207,7 @@
       }
 
       function initialize() {
-        sourcePatternEl.textContent = "https://files.alislam.cloud/audio/tilawat/rashid/CHAPTER-VERSE-AR.mp3";
+        loadChapterDropdowns();
         playButton.addEventListener("click", onPlay);
         singleButton.addEventListener("click", onPlaySingleVerse);
         restartButton.addEventListener("click", restartFromBeginning);
@@ -1171,6 +1222,12 @@
 
         [startChapterInput, startVerseInput, endChapterInput, endVerseInput, repeatCountInput].forEach((input) => {
           input.addEventListener("input", () => {
+            validateInputs(false);
+            if (!state.active && !state.paused) {
+              updateMeta();
+            }
+          });
+          input.addEventListener("change", () => {
             validateInputs(false);
             if (!state.active && !state.paused) {
               updateMeta();
