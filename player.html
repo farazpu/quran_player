@@ -104,7 +104,7 @@
       .actions {
         margin-top: 14px;
         display: grid;
-        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        grid-template-columns: repeat(4, minmax(120px, 1fr));
         gap: 10px;
       }
 
@@ -384,8 +384,6 @@
 
       <section class="actions">
         <button class="primary" id="playButton">Play</button>
-        <button id="singleButton">Play Start Verse</button>
-        <button id="restartButton">Restart From Beginning</button>
         <button id="pauseButton">Pause</button>
         <button class="danger" id="stopButton">Stop</button>
         <button id="saveSetButton">Save...</button>
@@ -451,8 +449,6 @@
       const repeatModeSelect = document.getElementById("repeatMode");
       const repeatCountInput = document.getElementById("repeatCount");
       const playButton = document.getElementById("playButton");
-      const singleButton = document.getElementById("singleButton");
-      const restartButton = document.getElementById("restartButton");
       const pauseButton = document.getElementById("pauseButton");
       const stopButton = document.getElementById("stopButton");
       const saveSetButton = document.getElementById("saveSetButton");
@@ -613,7 +609,26 @@
       }
 
       function formatRef(ref) {
-        return `${pad3(ref.chapter)}:${pad3(ref.verse)}`;
+        return `${ref.chapter}:${ref.verse}`;
+      }
+
+      function getChapterDisplayName(chapterId) {
+        const option = startChapterInput.querySelector(`option[value="${chapterId}"]`) || endChapterInput.querySelector(`option[value="${chapterId}"]`);
+        if (!option) {
+          return `Chapter ${chapterId}`;
+        }
+
+        const label = option.textContent?.trim() || `Chapter ${chapterId}`;
+        const split = label.split(" - ");
+        if (split.length >= 2) {
+          return split.slice(1).join(" - ");
+        }
+
+        return label;
+      }
+
+      function formatRefFriendly(ref) {
+        return `Surah ${getChapterDisplayName(ref.chapter)} (${ref.chapter}), Verse ${ref.verse}`;
       }
 
       function verseKey(ref) {
@@ -754,7 +769,7 @@
           button.dataset.setId = item.id;
 
           const repeatText = item.repeatMode === "count" ? `N=${item.repeatCount}` : item.repeatMode === "forever" ? "Forever" : "Off";
-          button.innerHTML = `<span class="sets-item-label">${item.label}</span><span class="sets-item-meta">${pad3(item.startChapter)}:${pad3(item.startVerse)} → ${pad3(item.endChapter)}:${pad3(item.endVerse)} | Repeat: ${repeatText}</span>`;
+          button.innerHTML = `<span class="sets-item-label">${item.label}</span><span class="sets-item-meta">${item.startChapter}:${item.startVerse} → ${item.endChapter}:${item.endVerse} | Repeat: ${repeatText}</span>`;
 
           li.appendChild(button);
           setsListEl.appendChild(li);
@@ -827,9 +842,28 @@
         setStatus(`Loaded memorization set: ${item.label}`);
       }
 
+      function getLastSavedMemorizationSetId() {
+        if (!state.memorizationSets.length) {
+          return null;
+        }
+
+        let latestSet = state.memorizationSets[0];
+        let latestTime = Date.parse(latestSet.updatedAt || latestSet.createdAt || "") || 0;
+
+        for (const item of state.memorizationSets) {
+          const itemTime = Date.parse(item.updatedAt || item.createdAt || "") || 0;
+          if (itemTime > latestTime) {
+            latestSet = item;
+            latestTime = itemTime;
+          }
+        }
+
+        return latestSet.id;
+      }
+
       function renderCurrentVerseText(ref = null) {
         if (!ref) {
-          currentVerseRefEl.textContent = "Verse --:---";
+          currentVerseRefEl.textContent = "Verse --:--";
           setVerseText();
           setTextStatus("");
           return;
@@ -1035,10 +1069,21 @@
 
         const first = state.range[0];
         const last = state.range[state.range.length - 1];
-        const loopInfo = state.repeatMode === "forever" ? `Cycle: ${state.completedCycles + 1} / ∞` : `Cycle: ${Math.min(state.completedCycles + 1, state.targetCycles)} / ${state.targetCycles}`;
-
         const current = ref || state.range[state.currentIndex];
-        metaEl.textContent = `Range ${formatRef(first)} → ${formatRef(last)} | Current ${formatRef(current)} | ${loopInfo}`;
+
+        const rangeInfo =
+          first.chapter === last.chapter
+            ? `Range: Surah ${getChapterDisplayName(first.chapter)} (${first.chapter}), verses ${first.verse} to ${last.verse}`
+            : `Range: ${formatRefFriendly(first)} to ${formatRefFriendly(last)}`;
+
+        let repeatInfo = "Repeat: Off";
+        if (state.repeatMode === "forever") {
+          repeatInfo = `Repeat: Cycle ${state.completedCycles + 1} (Forever)`;
+        } else if (state.repeatMode === "count") {
+          repeatInfo = `Repeat: Cycle ${Math.min(state.completedCycles + 1, state.targetCycles)} of ${state.targetCycles}`;
+        }
+
+        metaEl.textContent = `${rangeInfo} | Now at: ${formatRefFriendly(current)} | ${repeatInfo}`;
       }
 
       async function playCurrentRef() {
@@ -1051,7 +1096,7 @@
         audioPlayer.src = url;
         updateMeta(ref);
         renderCurrentVerseText(ref);
-        setStatus(`Playing ${formatRef(ref)}.`);
+        setStatus(`Playing ${formatRefFriendly(ref)}.`);
 
         try {
           await audioPlayer.play();
@@ -1124,20 +1169,6 @@
         stopPlayback("Completed selected range.");
       }
 
-      function restartFromBeginning() {
-        if (!state.range.length) {
-          setStatus("Start playback first, then use restart.", true);
-          return;
-        }
-
-        state.currentIndex = 0;
-        if (!state.active) {
-          state.active = true;
-        }
-        state.paused = false;
-        playCurrentRef();
-      }
-
       function onPlay() {
         if (state.paused && state.range.length) {
           audioPlayer
@@ -1157,18 +1188,6 @@
         if (!validateInputs(true)) {
           return;
         }
-
-        const { start, end } = getFormRefs();
-        startNewSession(start, end);
-      }
-
-      function onPlaySingleVerse() {
-        if (!validateInputs(true)) {
-          return;
-        }
-
-        endChapterInput.value = startChapterInput.value;
-        endVerseInput.value = startVerseInput.value;
 
         const { start, end } = getFormRefs();
         startNewSession(start, end);
@@ -1209,8 +1228,6 @@
       function initialize() {
         loadChapterDropdowns();
         playButton.addEventListener("click", onPlay);
-        singleButton.addEventListener("click", onPlaySingleVerse);
-        restartButton.addEventListener("click", restartFromBeginning);
         pauseButton.addEventListener("click", onPause);
         stopButton.addEventListener("click", () => stopPlayback("Stopped."));
         saveSetButton.addEventListener("click", saveMemorizationSet);
@@ -1239,6 +1256,10 @@
         validateInputs(false);
         state.memorizationSets = readMemorizationSets();
         renderMemorizationSets();
+        const lastSetId = getLastSavedMemorizationSetId();
+        if (lastSetId) {
+          loadMemorizationSet(lastSetId);
+        }
         updateMeta();
         renderCurrentVerseText(null);
       }
