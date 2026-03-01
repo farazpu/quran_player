@@ -160,10 +160,72 @@
         line-height: 1.45;
       }
 
-      .mode-grid {
+      .repeat-options {
+        margin-top: 10px;
         display: grid;
-        grid-template-columns: 1.2fr 0.8fr;
         gap: 10px;
+      }
+
+      .repeat-strip {
+        grid-column: 1 / -1;
+        padding: 10px 14px;
+      }
+
+      .repeat-strip-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .repeat-strip .panel h2 {
+        margin: 0;
+      }
+
+      .repeat-strip .repeat-options {
+        margin-top: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .repeat-strip #repeatCountWrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .repeat-strip .repeat-options.hidden {
+        display: none;
+      }
+
+      .repeat-strip #repeatCountWrap.hidden {
+        display: none;
+      }
+
+      .repeat-strip #repeatCountWrap label {
+        margin: 0;
+        white-space: nowrap;
+      }
+
+      .repeat-strip #repeatCount {
+        width: 100px;
+      }
+
+      .inline-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        color: #dce8ff;
+        margin: 0;
+      }
+
+      .inline-check input[type="checkbox"] {
+        width: auto;
+        padding: 0;
+        margin: 0;
+        accent-color: #6d96ff;
       }
 
       .hidden {
@@ -325,6 +387,16 @@
         .sets-controls {
           grid-template-columns: 1fr;
         }
+
+        .repeat-strip #repeatCount {
+          width: 100%;
+        }
+
+        .repeat-strip .repeat-options,
+        .repeat-strip #repeatCountWrap {
+          display: grid;
+          gap: 8px;
+        }
       }
     </style>
   </head>
@@ -362,23 +434,25 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel repeat-strip">
           <h2>Repeat</h2>
-          <div class="mode-grid">
-            <div>
-              <label for="repeatMode">Mode</label>
-              <select id="repeatMode">
-                <option value="off">Off</option>
-                <option value="count">N times</option>
-                <option value="forever">Forever</option>
-              </select>
-            </div>
-            <div>
-              <label for="repeatCount">N</label>
-              <input id="repeatCount" type="number" min="1" step="1" value="3" disabled />
+          <div class="repeat-strip-head">
+            <label class="inline-check" for="repeatEnabled">
+              <input id="repeatEnabled" type="checkbox" />
+              Repeat
+            </label>
+
+            <div id="repeatOptions" class="repeat-options hidden">
+              <div id="repeatCountWrap">
+                <label for="repeatCount">N Times</label>
+                <input id="repeatCount" type="number" min="1" step="1" value="3" />
+              </div>
+              <label class="inline-check" for="repeatForever">
+                <input id="repeatForever" type="checkbox" />
+                Forever
+              </label>
             </div>
           </div>
-          <p class="help">N is full-range cycles. Example: N=3 means your selected range plays 3 full times.</p>
         </div>
       </section>
 
@@ -446,7 +520,10 @@
       const startVerseInput = document.getElementById("startVerse");
       const endChapterInput = document.getElementById("endChapter");
       const endVerseInput = document.getElementById("endVerse");
-      const repeatModeSelect = document.getElementById("repeatMode");
+      const repeatEnabledInput = document.getElementById("repeatEnabled");
+      const repeatForeverInput = document.getElementById("repeatForever");
+      const repeatOptionsEl = document.getElementById("repeatOptions");
+      const repeatCountWrapEl = document.getElementById("repeatCountWrap");
       const repeatCountInput = document.getElementById("repeatCount");
       const playButton = document.getElementById("playButton");
       const pauseButton = document.getElementById("pauseButton");
@@ -778,6 +855,7 @@
 
       function buildSetFromCurrentUi(label) {
         const { start, end } = getFormRefs();
+        const selectedRepeatMode = getSelectedRepeatMode();
         return {
           id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
           label,
@@ -785,8 +863,8 @@
           startVerse: start.verse,
           endChapter: end.chapter,
           endVerse: end.verse,
-          repeatMode: repeatModeSelect.value,
-          repeatCount: repeatModeSelect.value === "count" ? Math.max(1, toInt(repeatCountInput.value)) : 1,
+          repeatMode: selectedRepeatMode,
+          repeatCount: selectedRepeatMode === "count" ? Math.max(1, toInt(repeatCountInput.value)) : 1,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -833,7 +911,8 @@
         startVerseInput.value = String(item.startVerse);
         endChapterInput.value = String(item.endChapter);
         endVerseInput.value = String(item.endVerse);
-        repeatModeSelect.value = item.repeatMode;
+        repeatEnabledInput.checked = item.repeatMode !== "off";
+        repeatForeverInput.checked = item.repeatMode === "forever";
         repeatCountInput.value = String(item.repeatCount);
         setLabelInput.value = item.label;
 
@@ -1002,8 +1081,20 @@
         statusEl.classList.toggle("error", isError);
       }
 
+      function getSelectedRepeatMode() {
+        if (!repeatEnabledInput.checked) {
+          return "off";
+        }
+
+        if (repeatForeverInput.checked) {
+          return "forever";
+        }
+
+        return "count";
+      }
+
       function computeTargetCycles() {
-        const mode = repeatModeSelect.value;
+        const mode = getSelectedRepeatMode();
         if (mode === "off") {
           return 1;
         }
@@ -1050,7 +1141,7 @@
           return false;
         }
 
-        if (repeatModeSelect.value === "count" && toInt(repeatCountInput.value) < 1) {
+        if (getSelectedRepeatMode() === "count" && toInt(repeatCountInput.value) < 1) {
           if (showStatus) setStatus("Repeat count N must be at least 1.", true);
           return false;
         }
@@ -1130,7 +1221,7 @@
       }
 
       function startNewSession(start, end) {
-        state.repeatMode = repeatModeSelect.value;
+        state.repeatMode = getSelectedRepeatMode();
         state.targetCycles = computeTargetCycles();
         state.completedCycles = 0;
         state.currentIndex = 0;
@@ -1206,7 +1297,17 @@
       }
 
       function onRepeatModeChange() {
-        const countMode = repeatModeSelect.value === "count";
+        if (!repeatEnabledInput.checked) {
+          repeatForeverInput.checked = false;
+        }
+
+        const mode = getSelectedRepeatMode();
+        const enabled = mode !== "off";
+        const countMode = mode === "count";
+
+        repeatOptionsEl.classList.toggle("hidden", !enabled);
+        repeatCountWrapEl.classList.toggle("hidden", !countMode);
+        repeatForeverInput.disabled = !enabled;
         repeatCountInput.disabled = !countMode;
         validateInputs(false);
       }
@@ -1233,7 +1334,8 @@
         saveSetButton.addEventListener("click", saveMemorizationSet);
         saveSetInlineButton.addEventListener("click", saveMemorizationSet);
         setsListEl.addEventListener("click", onSetListClick);
-        repeatModeSelect.addEventListener("change", onRepeatModeChange);
+        repeatEnabledInput.addEventListener("change", onRepeatModeChange);
+        repeatForeverInput.addEventListener("change", onRepeatModeChange);
         audioPlayer.addEventListener("ended", handleEnded);
         audioPlayer.addEventListener("error", onAudioError);
 
